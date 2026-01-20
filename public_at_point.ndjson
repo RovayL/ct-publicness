@@ -1,0 +1,2 @@
+{"kind": "public_at_point", "fn": "foo", "pp": "foo:bb0:i8", "value": "v9", "public": true, "total_paths": 2, "missing_paths": 0, "truncated": false}
+{"kind": "public_at_point", "fn": "foo", "pp": "foo:bb1:i2", "value": "v19", "public": false, "total_paths": 1, "missing_paths": 0, "truncated": false}

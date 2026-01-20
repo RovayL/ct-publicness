@@ -1,0 +1,3 @@
+{"kind":"path_publicness","fn":"foo","path_id":0,"pp":"foo:bb0:i8","value":"v9","public":true}
+{"kind":"path_publicness","fn":"foo","path_id":1,"pp":"foo:bb0:i8","value":"v9","public":true}
+{"kind":"path_publicness","fn":"foo","path_id":0,"pp":"foo:bb1:i2","value":"v19","public":false}
