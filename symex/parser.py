@@ -54,6 +54,8 @@ def load_trace(path: str) -> List[TraceInst]:
                 tx=tx,
                 def_ty=rec.get("def_ty"),
                 use_tys=rec.get("use_tys"),
+                icmp_pred=rec.get("icmp_pred"),
+                fcmp_pred=rec.get("fcmp_pred"),
             )
         )
     return insts

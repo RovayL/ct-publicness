@@ -19,10 +19,23 @@ RUN_REPEAT="${RUN_REPEAT:-1}"
 export TRACE_INDEX TRACE_TYPES EMIT_PP_COVERAGE INCLUDE_PP_SEQ PATH_COND_FORMAT
 export MAX_PATHS MAX_PATH_DEPTH MAX_LOOP_ITERS MAX_INST
 export BENCH_LIST EMIT_RUN_SUMMARY RUN_REPEAT
-
 ./scripts/gen_traces.sh
 
-OUT="${1:-${ROOT}/metrics.csv}"
-CFG_IN="${2:-${ROOT}/build/traces/toy.cfg.ndjson}"
-python3 -m symex.metrics --cfg "${CFG_IN}" --out "${OUT}"
+OUT="${1:-${ROOT}/benchmarks.csv}"
+shift || true
+
+cfg_args=()
+if (( $# > 0 )); then
+  if [[ $# -eq 1 && ( "$1" == *"*"* || "$1" == *"?"* || "$1" == *"["* ) ]]; then
+    cfg_args=(--cfg-glob "$1")
+  else
+    for cfg in "$@"; do
+      cfg_args+=(--cfg "$cfg")
+    done
+  fi
+else
+  cfg_args=(--cfg-glob "${ROOT}/build/traces/*.cfg.ndjson")
+fi
+
+python3 -m symex.benchmarks "${cfg_args[@]}" --out "${OUT}"
 echo "Wrote ${OUT}"

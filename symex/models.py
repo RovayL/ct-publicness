@@ -29,6 +29,8 @@ class TraceInst:
     tx: Optional[TxInfo]
     def_ty: Optional[str]
     use_tys: Optional[Sequence[str]]
+    icmp_pred: Optional[str]
+    fcmp_pred: Optional[str]
 
 
 @dataclass(frozen=True)

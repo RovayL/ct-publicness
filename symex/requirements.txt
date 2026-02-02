@@ -1,2 +1,4 @@
 # Optional: install z3-solver if using the Z3 backend.
-# z3-solver==4.12.2.0
+# setuptools provides pkg_resources used by z3's Python bindings.
+setuptools>=65
+z3-solver==4.12.2.0

@@ -75,6 +75,72 @@ Quick start (Person A)
    cd build && ninja
 2) Generate traces:
    TRACE_INDEX=1 EMIT_PP_COVERAGE=1 ./scripts/gen_traces.sh
+3) Run benchmarks:
+   ./scripts/run_benchmarks.sh benchmarks.csv
+4) Benchmark documentation:
+   see benchmarks.md
+
+Command cheat sheet
+Install system dependencies (Ubuntu)
+```bash
+sudo apt update
+sudo apt install -y build-essential git cmake ninja-build python3 python3-venv \
+  llvm llvm-dev clang lld libedit-dev libzstd-dev
+```
+
+Create and activate venv, install Python deps
+```bash
+python3 -m venv venv-ct-publicness
+source venv-ct-publicness/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r symex/requirements.txt
+```
+
+Sequence of commands (end-to-end)
+```bash
+# 1) Build the LLVM pass
+cd build && ninja
+cd ..
+
+# 2) Person A: emit trace + CFG artifacts
+TRACE_INDEX=1 EMIT_PP_COVERAGE=1 PATH_COND_FORMAT=both ./scripts/gen_traces.sh
+
+# 3) Person B: run minimal symexec and aggregate
+source venv-ct-publicness/bin/activate
+python -m symex.analyze --mode symexec \
+  --trace build/traces/toy.ndjson \
+  --cfg build/traces/toy.cfg.ndjson \
+  --out path_public.ndjson
+python -m symex.aggregate \
+  --cfg build/traces/toy.cfg.ndjson \
+  --path-results path_public.ndjson \
+  --out public_at_point.ndjson
+```
+
+Run Person A only (generate artifacts)
+```bash
+cd build && ninja
+cd ..
+TRACE_INDEX=1 EMIT_PP_COVERAGE=1 PATH_COND_FORMAT=both ./scripts/gen_traces.sh
+```
+
+Run Person B only (minimal symexec + aggregation)
+```bash
+source venv-ct-publicness/bin/activate
+python -m symex.analyze --mode symexec \
+  --trace build/traces/toy.ndjson \
+  --cfg build/traces/toy.cfg.ndjson \
+  --out path_public.ndjson
+python -m symex.aggregate \
+  --cfg build/traces/toy.cfg.ndjson \
+  --path-results path_public.ndjson
+```
+
+Run full pipeline (benchmarks + metrics)
+```bash
+source venv-ct-publicness/bin/activate
+RUN_REPEAT=3 ./scripts/run_benchmarks.sh benchmarks.csv
+```
 
 Quick start (Person B)
 1) Summarize trace + CFG:

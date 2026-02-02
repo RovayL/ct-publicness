@@ -8,6 +8,7 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -550,9 +551,17 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
           if (TraceTypes) {
             useTypes.reserve(I.getNumOperands());
           }
+          bool isPhi = isa<PHINode>(I);
           for (const Use &U : I.operands()) {
             const Value *V = U.get();
-            if (isa<BasicBlock>(V)) continue;
+            if (auto *BB = dyn_cast<BasicBlock>(V)) {
+              if (!isPhi) continue;
+              uses.push_back(bbLabels[BB]);
+              if (TraceTypes) {
+                useTypes.push_back(typeToString(V->getType()));
+              }
+              continue;
+            }
             uses.push_back(getValueId(V, valueIds, nextValueId));
             if (TraceTypes) {
               useTypes.push_back(typeToString(V->getType()));
@@ -587,6 +596,13 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
               emitJsonString(*trace, useTypes[i]);
             }
             *trace << "]";
+          }
+          if (auto *IC = dyn_cast<ICmpInst>(&I)) {
+            *trace << ",\"icmp_pred\":";
+            emitJsonString(*trace, ICmpInst::getPredicateName(IC->getPredicate()));
+          } else if (auto *FC = dyn_cast<FCmpInst>(&I)) {
+            *trace << ",\"fcmp_pred\":";
+            emitJsonString(*trace, FCmpInst::getPredicateName(FC->getPredicate()));
           }
           if (tx.present) {
             *trace << ",\"tx\":{";
