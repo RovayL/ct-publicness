@@ -35,13 +35,27 @@ if (( ${#sources[@]} == 0 )); then
 fi
 
 for src in "${sources[@]}"; do
-  base="$(basename "${src}" .c)"
+  ext="${src##*.}"
+  case "${ext}" in
+    c|ll) ;;
+    *)
+      echo "Skipping unsupported source type: ${src}" >&2
+      continue
+      ;;
+  esac
+
+  base="$(basename "${src}")"
+  base="${base%.*}"
   ll="${OUT_DIR}/${base}.ll"
   trace="${OUT_DIR}/${base}.ndjson"
   cfg="${OUT_DIR}/${base}.cfg.ndjson"
   index="${OUT_DIR}/${base}.trace_index.ndjson"
 
-  clang -O0 -Xclang -disable-O0-optnone -S -emit-llvm "${src}" -o "${ll}"
+  if [[ "${ext}" == "c" ]]; then
+    clang -O0 -Xclang -disable-O0-optnone -S -emit-llvm "${src}" -o "${ll}"
+  else
+    cp "${src}" "${ll}"
+  fi
   trace_index_arg=()
   if [[ "${TRACE_INDEX:-0}" == "1" ]]; then
     trace_index_arg=(-public-data-trace-index="${index}")

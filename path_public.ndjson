@@ -1,0 +1,36 @@
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i0", "value": "v0", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i1", "value": "v1", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i2", "value": "v2", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i3", "value": "v3", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i4", "value": "v4", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i8", "value": "v5", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i9", "value": "v6", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i11", "value": "v7", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i12", "value": "v8", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i14", "value": "v9", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i15", "value": "v10", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb0:i16", "value": "v11", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb1:i0", "value": "v12", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb1:i1", "value": "v13", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb1:i2", "value": "v14", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb2:i0", "value": "v15", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb2:i1", "value": "v16", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 0, "pp": "foo:bb2:i3", "value": "v17", "public": true}
+{"kind": "path_analysis_summary", "fn": "foo", "path_id": 0, "inst_count": 28, "def_count": 18, "query_count": 18, "sat_count": 9, "unsat_count": 9, "unknown_count": 0, "solver_time_ms": 3.378, "cache_hits": 5, "cache_misses": 13}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i0", "value": "v0", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i1", "value": "v1", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i2", "value": "v2", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i3", "value": "v3", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i4", "value": "v4", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i8", "value": "v5", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i9", "value": "v6", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i11", "value": "v7", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i12", "value": "v8", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i14", "value": "v9", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i15", "value": "v10", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb0:i16", "value": "v11", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb2:i0", "value": "v15", "public": true}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb2:i1", "value": "v16", "public": false}
+{"kind": "path_publicness", "fn": "foo", "path_id": 1, "pp": "foo:bb2:i3", "value": "v17", "public": true}
+{"kind": "path_analysis_summary", "fn": "foo", "path_id": 1, "inst_count": 23, "def_count": 15, "query_count": 15, "sat_count": 6, "unsat_count": 9, "unknown_count": 0, "solver_time_ms": 1.772, "cache_hits": 3, "cache_misses": 12}
+{"kind": "function_analysis_summary", "fn": "foo", "paths_analyzed": 2, "inst_count": 51, "def_count": 33, "query_count": 33, "sat_count": 15, "unsat_count": 18, "unknown_count": 0, "solver_time_ms": 5.15, "cache_hits": 8, "cache_misses": 25}

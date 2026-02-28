@@ -7,19 +7,38 @@ approximate memory model (per-pointer map). It is intended as a starting
 point for Person B to extend.
 """
 
+import hashlib
+import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from .models import TraceInst, TxInfo
+from .models import TraceInst
 from .publicness import PathPublicness
 from .solver import Z3Solver
 
 
 @dataclass
 class SymState:
+    tag: str
     env: Dict[str, object]
     mem: Dict[str, object]
     fresh_id: int
+
+
+@dataclass(frozen=True)
+class PathAnalysisSummary:
+    """Per-path solver/query stats for benchmarking and reporting."""
+    fn: str
+    path_id: int
+    inst_count: int
+    def_count: int
+    query_count: int
+    sat_count: int
+    unsat_count: int
+    unknown_count: int
+    solver_time_ms: float
+    cache_hits: int
+    cache_misses: int
 
 
 def _parse_ty_width(ty: Optional[str], ptr_width: int) -> int:
@@ -39,6 +58,13 @@ def _const_to_bv(z3, const_id: str, width: int) -> object:
     w = int(w_str)
     v = int(v_str)
     return z3.BitVecVal(v, w if w else width)
+
+
+def _label_to_bv(z3, label_id: str, width: int) -> object:
+    """Encode label tokens (e.g., label:bb1) as stable BV literals."""
+    digest = hashlib.sha256(label_id.encode("utf-8")).hexdigest()
+    val = int(digest[:16], 16)
+    return z3.BitVecVal(val, width)
 
 
 def _parse_const(z3, const_id: str, width: int, ptr_width: int) -> object:
@@ -98,11 +124,13 @@ def _icmp_pred(z3, pred: str, a: object, b: object, signed: bool) -> object:
 class SymExecEngine:
     """Execute a path trace twice and query publicness via Z3."""
 
-    def __init__(self, ptr_width: int = 64) -> None:
+    def __init__(self, ptr_width: int = 64, enable_query_cache: bool = True) -> None:
         self.ptr_width = ptr_width
+        self.enable_query_cache = enable_query_cache
+        self._query_cache: Dict[str, Optional[bool]] = {}
 
     def _fresh(self, z3, state: SymState, name: str, width: int) -> object:
-        sym = z3.BitVec(f"{name}_{state.fresh_id}", width)
+        sym = z3.BitVec(f"{state.tag}_{name}_{state.fresh_id}", width)
         state.fresh_id += 1
         return sym
 
@@ -121,6 +149,143 @@ class SymExecEngine:
         sym = self._fresh(z3, state, f"u_{operand_id}", width)
         state.env[operand_id] = sym
         return sym
+
+    def _token_hint(self, token: str) -> Tuple[str, Optional[int]]:
+        if token.startswith("const:i"):
+            rest = token[len("const:i") :]
+            width_str, _ = rest.split(":", 1)
+            return "bv", int(width_str)
+        if token.startswith("const:fp:"):
+            return "real", None
+        if token in ("const:null", "const:undef", "const:poison"):
+            return "bv", self.ptr_width
+        if token.startswith("label:"):
+            return "bv", self.ptr_width
+        if token.startswith("const:"):
+            return "str", None
+        return "var", None
+
+    def _fresh_typed(
+        self,
+        z3,
+        state: SymState,
+        name: str,
+        prefer_kind: str,
+        prefer_width: Optional[int],
+    ) -> object:
+        if prefer_kind == "real":
+            sym = z3.Real(f"{state.tag}_{name}_{state.fresh_id}")
+            state.fresh_id += 1
+            return sym
+        if prefer_kind == "str":
+            sym = z3.String(f"{state.tag}_{name}_{state.fresh_id}")
+            state.fresh_id += 1
+            return sym
+        width = prefer_width if prefer_width is not None else self.ptr_width
+        return self._fresh(z3, state, name, width)
+
+    def _eval_condition_token(
+        self,
+        z3,
+        state: SymState,
+        token: str,
+        prefer_kind: str = "bv",
+        prefer_width: Optional[int] = None,
+    ) -> object:
+        if token.startswith("const:"):
+            return _parse_const(z3, token, prefer_width or self.ptr_width, self.ptr_width)
+        if token.startswith("label:"):
+            width = prefer_width if prefer_width is not None else self.ptr_width
+            return _label_to_bv(z3, token, width)
+        if token in state.env:
+            expr = state.env[token]
+            if prefer_kind == "bv":
+                width = prefer_width if prefer_width is not None else self.ptr_width
+                return _as_bv(z3, expr, width)
+            return expr
+        sym = self._fresh_typed(
+            z3, state, f"pc_{token}", prefer_kind, prefer_width
+        )
+        state.env[token] = sym
+        return sym
+
+    def _build_cmp_expr(
+        self,
+        z3,
+        state: SymState,
+        lhs: str,
+        rhs: str,
+        cmp_op: str,
+    ) -> object:
+        l_kind, l_width = self._token_hint(lhs)
+        r_kind, r_width = self._token_hint(rhs)
+
+        lhs_kind = r_kind if l_kind == "var" and r_kind != "var" else l_kind
+        rhs_kind = l_kind if r_kind == "var" and l_kind != "var" else r_kind
+        lhs_width = r_width if lhs_kind == "bv" and l_width is None else l_width
+        rhs_width = l_width if rhs_kind == "bv" and r_width is None else r_width
+
+        if lhs_kind == "var":
+            lhs_kind = "bv"
+        if rhs_kind == "var":
+            rhs_kind = "bv"
+
+        l_expr = self._eval_condition_token(
+            z3, state, lhs, prefer_kind=lhs_kind, prefer_width=lhs_width
+        )
+        r_expr = self._eval_condition_token(
+            z3, state, rhs, prefer_kind=rhs_kind, prefer_width=rhs_width
+        )
+
+        if z3.is_bv(l_expr) and z3.is_bv(r_expr) and l_expr.size() != r_expr.size():
+            width = max(l_expr.size(), r_expr.size())
+            l_expr = _as_bv(z3, l_expr, width)
+            r_expr = _as_bv(z3, r_expr, width)
+
+        if cmp_op == "==":
+            return l_expr == r_expr
+        if cmp_op == "!=":
+            return l_expr != r_expr
+        raise ValueError(f"unsupported compare op: {cmp_op}")
+
+    def _add_path_condition_json(self, solver: Z3Solver, z3, state: SymState, expr: dict) -> None:
+        op = expr.get("op")
+        if op == "and":
+            for term in expr.get("terms", []):
+                self._add_path_condition_json(solver, z3, state, term)
+            return
+        if op in ("==", "!="):
+            lhs = expr.get("lhs")
+            rhs = expr.get("rhs")
+            if not isinstance(lhs, str) or not isinstance(rhs, str):
+                raise ValueError(f"malformed path condition JSON: {expr}")
+            solver.add_expr(self._build_cmp_expr(z3, state, lhs, rhs, op))
+            return
+        raise ValueError(f"unsupported path condition JSON op: {op}")
+
+    def _add_path_conditions(
+        self,
+        solver: Z3Solver,
+        z3,
+        state: SymState,
+        path_conditions: Sequence[str],
+        path_conditions_json: Sequence[dict],
+    ) -> None:
+        if path_conditions_json:
+            for cond in path_conditions_json:
+                self._add_path_condition_json(solver, z3, state, cond)
+            return
+        for cond in path_conditions:
+            parts = [p.strip() for p in cond.split(" && ") if p.strip()]
+            for part in parts:
+                if "==" in part:
+                    lhs, rhs = [x.strip() for x in part.split("==", 1)]
+                    solver.add_expr(self._build_cmp_expr(z3, state, lhs, rhs, "=="))
+                elif "!=" in part:
+                    lhs, rhs = [x.strip() for x in part.split("!=", 1)]
+                    solver.add_expr(self._build_cmp_expr(z3, state, lhs, rhs, "!="))
+                else:
+                    raise ValueError(f"unsupported path condition string: {part}")
 
     def _eval_inst(
         self,
@@ -274,16 +439,16 @@ class SymExecEngine:
         self,
         path_id: int,
         insts: List[TraceInst],
-        path_conditions: List[str],
-    ) -> List[PathPublicness]:
+        path_conditions: Sequence[str],
+        path_conditions_json: Sequence[dict] = (),
+    ) -> Tuple[List[PathPublicness], PathAnalysisSummary]:
         """Run dual execution for a single path and emit publicness results."""
         solver = Z3Solver()
         z3 = solver.z3()
-        for cond in path_conditions:
-            solver.add_constraint_str(cond)
 
-        state_a = SymState(env={}, mem={}, fresh_id=0)
-        state_b = SymState(env={}, mem={}, fresh_id=0)
+        state_a = SymState(tag="A", env={}, mem={}, fresh_id=0)
+        state_b = SymState(tag="B", env={}, mem={}, fresh_id=0)
+        tx_equalities: List[object] = []
 
         # Execute instructions and collect transmitter equality constraints.
         prev_bb = None
@@ -296,18 +461,49 @@ class SymExecEngine:
             self._eval_inst(z3, inst, state_b, "B", prev_bb)
             if inst.tx and inst.tx.which < len(inst.uses):
                 op_id = inst.uses[inst.tx.which]
-                a_expr = state_a.env.get(op_id)
-                b_expr = state_b.env.get(op_id)
-                if a_expr is not None and b_expr is not None:
-                    solver.add_expr(a_expr == b_expr)
+                op_width = self.ptr_width
+                if inst.use_tys and inst.tx.which < len(inst.use_tys):
+                    op_width = _parse_ty_width(inst.use_tys[inst.tx.which], self.ptr_width)
+                a_expr = self._eval_operand(z3, state_a, op_id, op_width)
+                b_expr = self._eval_operand(z3, state_b, op_id, op_width)
+                tx_equalities.append(a_expr == b_expr)
+
+        # Path constraints must hold for each execution separately.
+        self._add_path_conditions(
+            solver=solver,
+            z3=z3,
+            state=state_a,
+            path_conditions=path_conditions,
+            path_conditions_json=path_conditions_json,
+        )
+        self._add_path_conditions(
+            solver=solver,
+            z3=z3,
+            state=state_b,
+            path_conditions=path_conditions,
+            path_conditions_json=path_conditions_json,
+        )
+        for eq in tx_equalities:
+            solver.add_expr(eq)
 
         results: List[PathPublicness] = []
+        query_count = 0
+        sat_count = 0
+        unsat_count = 0
+        unknown_count = 0
+        cache_hits = 0
+        cache_misses = 0
+        solver_time_ms = 0.0
+        base_key = hashlib.sha256(solver.solver().sexpr().encode("utf-8")).hexdigest()
+
         for inst in insts:
             if not inst.def_id:
                 continue
+            query_count += 1
             a_expr = state_a.env.get(inst.def_id)
             b_expr = state_b.env.get(inst.def_id)
             if a_expr is None or b_expr is None:
+                unknown_count += 1
                 results.append(
                     PathPublicness(
                         fn=inst.fn,
@@ -318,21 +514,62 @@ class SymExecEngine:
                     )
                 )
                 continue
-            solver.solver().push()
-            solver.add_expr(a_expr != b_expr)
-            sat = solver.solver().check() == z3.sat
-            solver.solver().pop()
+
+            diff_expr = a_expr != b_expr
+            query_key = hashlib.sha256(
+                f"{base_key}|{diff_expr.sexpr()}".encode("utf-8")
+            ).hexdigest()
+            sat: Optional[bool]
+            cached = self.enable_query_cache and query_key in self._query_cache
+            if cached:
+                cache_hits += 1
+                sat = self._query_cache[query_key]
+            else:
+                cache_misses += 1
+                solver.solver().push()
+                solver.add_expr(diff_expr)
+                t0 = time.perf_counter()
+                check_res = solver.solver().check()
+                solver_time_ms += (time.perf_counter() - t0) * 1000.0
+                solver.solver().pop()
+                if check_res == z3.sat:
+                    sat = True
+                elif check_res == z3.unsat:
+                    sat = False
+                else:
+                    sat = None
+                if self.enable_query_cache:
+                    self._query_cache[query_key] = sat
+
+            if sat is True:
+                sat_count += 1
+            elif sat is False:
+                unsat_count += 1
+            else:
+                unknown_count += 1
             results.append(
                 PathPublicness(
                     fn=inst.fn,
                     path_id=path_id,
                     pp=inst.pp,
                     value=inst.def_id,
-                    public=bool(sat),
+                    public=sat,
                 )
             )
-        return results
+        summary = PathAnalysisSummary(
+            fn=insts[0].fn if insts else "",
+            path_id=path_id,
+            inst_count=len(insts),
+            def_count=sum(1 for inst in insts if inst.def_id),
+            query_count=query_count,
+            sat_count=sat_count,
+            unsat_count=unsat_count,
+            unknown_count=unknown_count,
+            solver_time_ms=solver_time_ms,
+            cache_hits=cache_hits,
+            cache_misses=cache_misses,
+        )
+        return results, summary
 
 
 # TODO(person B): Replace the memory model with array theory or SSA memory.
-# TODO(person B): Use path_cond_json directly for structured constraints.

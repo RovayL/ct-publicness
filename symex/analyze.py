@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
 
 from .pipeline import build_pipeline
 from .symexec import SymExecEngine
@@ -38,21 +39,39 @@ def emit_path_publicness_stub(trace_path: str, cfg_path: str, out_path: str) -> 
                     f.write(json.dumps(rec) + "\n")
 
 
-def emit_path_publicness_symexec(trace_path: str, cfg_path: str, out_path: str) -> None:
+def emit_path_publicness_symexec(
+    trace_path: str,
+    cfg_path: str,
+    out_path: str,
+    use_cache: bool = True,
+) -> None:
     """Run minimal symexec per path and emit path_publicness records."""
     pipes = build_pipeline(trace_path, cfg_path)
-    engine = SymExecEngine()
+    engine = SymExecEngine(enable_query_cache=use_cache)
     with open(out_path, "w", encoding="utf-8") as f:
         for fn, pipe in pipes.items():
+            fn_stats = defaultdict(float)
+            paths_analyzed = 0
             for bundle in pipe.paths:
                 path_id = bundle.path.path_id
                 if path_id is None:
                     continue
-                results = engine.analyze_path(
+                results, summary = engine.analyze_path(
                     path_id=path_id,
                     insts=bundle.insts,
                     path_conditions=bundle.path.path_cond,
+                    path_conditions_json=bundle.path.path_cond_json,
                 )
+                paths_analyzed += 1
+                fn_stats["inst_count"] += summary.inst_count
+                fn_stats["def_count"] += summary.def_count
+                fn_stats["query_count"] += summary.query_count
+                fn_stats["sat_count"] += summary.sat_count
+                fn_stats["unsat_count"] += summary.unsat_count
+                fn_stats["unknown_count"] += summary.unknown_count
+                fn_stats["solver_time_ms"] += summary.solver_time_ms
+                fn_stats["cache_hits"] += summary.cache_hits
+                fn_stats["cache_misses"] += summary.cache_misses
                 for r in results:
                     rec = {
                         "kind": "path_publicness",
@@ -63,6 +82,45 @@ def emit_path_publicness_symexec(trace_path: str, cfg_path: str, out_path: str) 
                         "public": r.public,
                     }
                     f.write(json.dumps(rec) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "kind": "path_analysis_summary",
+                            "fn": summary.fn,
+                            "path_id": summary.path_id,
+                            "inst_count": summary.inst_count,
+                            "def_count": summary.def_count,
+                            "query_count": summary.query_count,
+                            "sat_count": summary.sat_count,
+                            "unsat_count": summary.unsat_count,
+                            "unknown_count": summary.unknown_count,
+                            "solver_time_ms": round(summary.solver_time_ms, 3),
+                            "cache_hits": summary.cache_hits,
+                            "cache_misses": summary.cache_misses,
+                        }
+                    )
+                    + "\n"
+                )
+            if paths_analyzed > 0:
+                f.write(
+                    json.dumps(
+                        {
+                            "kind": "function_analysis_summary",
+                            "fn": fn,
+                            "paths_analyzed": int(paths_analyzed),
+                            "inst_count": int(fn_stats["inst_count"]),
+                            "def_count": int(fn_stats["def_count"]),
+                            "query_count": int(fn_stats["query_count"]),
+                            "sat_count": int(fn_stats["sat_count"]),
+                            "unsat_count": int(fn_stats["unsat_count"]),
+                            "unknown_count": int(fn_stats["unknown_count"]),
+                            "solver_time_ms": round(float(fn_stats["solver_time_ms"]), 3),
+                            "cache_hits": int(fn_stats["cache_hits"]),
+                            "cache_misses": int(fn_stats["cache_misses"]),
+                        }
+                    )
+                    + "\n"
+                )
 
 
 def main() -> int:
@@ -79,10 +137,17 @@ def main() -> int:
         default="stub",
         help="Analysis mode (symexec is minimal MVP)",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable solver query cache in symexec mode",
+    )
     args = parser.parse_args()
 
     if args.mode == "symexec":
-        emit_path_publicness_symexec(args.trace, args.cfg, args.out)
+        emit_path_publicness_symexec(
+            args.trace, args.cfg, args.out, use_cache=not args.no_cache
+        )
     else:
         emit_path_publicness_stub(args.trace, args.cfg, args.out)
     return 0

@@ -6,6 +6,7 @@ import argparse
 import csv
 import glob
 import os
+from collections import defaultdict
 from typing import Dict, List
 
 from .parser import load_cfg, load_func_summary, read_ndjson
@@ -105,6 +106,77 @@ def _load_run_summary(path: str) -> Dict[str, dict]:
     return by_source
 
 
+def _analysis_base(path: str) -> str:
+    base = os.path.basename(path)
+    for suffix in (".path_public.ndjson", ".analysis.ndjson", ".ndjson"):
+        if base.endswith(suffix):
+            return base[: -len(suffix)]
+    return os.path.splitext(base)[0]
+
+
+def _load_analysis_summary(path: str) -> Dict[str, dict]:
+    """Load function-level solver stats from analysis NDJSON."""
+    by_fn: Dict[str, dict] = {}
+    accum: Dict[str, dict] = defaultdict(
+        lambda: {
+            "paths_analyzed": 0,
+            "symex_inst_count": 0,
+            "symex_def_count": 0,
+            "query_count": 0,
+            "sat_count": 0,
+            "unsat_count": 0,
+            "unknown_count": 0,
+            "solver_time_ms": 0.0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+        }
+    )
+    if not os.path.exists(path):
+        return by_fn
+
+    for rec in read_ndjson(path):
+        kind = rec.get("kind")
+        if kind == "function_analysis_summary":
+            fn = rec.get("fn")
+            if not fn:
+                continue
+            by_fn[fn] = {
+                "paths_analyzed": rec.get("paths_analyzed"),
+                "symex_inst_count": rec.get("inst_count"),
+                "symex_def_count": rec.get("def_count"),
+                "query_count": rec.get("query_count"),
+                "sat_count": rec.get("sat_count"),
+                "unsat_count": rec.get("unsat_count"),
+                "unknown_count": rec.get("unknown_count"),
+                "solver_time_ms": rec.get("solver_time_ms"),
+                "cache_hits": rec.get("cache_hits"),
+                "cache_misses": rec.get("cache_misses"),
+            }
+        elif kind == "path_analysis_summary":
+            fn = rec.get("fn")
+            if not fn:
+                continue
+            a = accum[fn]
+            a["paths_analyzed"] += 1
+            a["symex_inst_count"] += int(rec.get("inst_count", 0))
+            a["symex_def_count"] += int(rec.get("def_count", 0))
+            a["query_count"] += int(rec.get("query_count", 0))
+            a["sat_count"] += int(rec.get("sat_count", 0))
+            a["unsat_count"] += int(rec.get("unsat_count", 0))
+            a["unknown_count"] += int(rec.get("unknown_count", 0))
+            a["solver_time_ms"] += float(rec.get("solver_time_ms", 0.0))
+            a["cache_hits"] += int(rec.get("cache_hits", 0))
+            a["cache_misses"] += int(rec.get("cache_misses", 0))
+
+    if by_fn:
+        return by_fn
+
+    # Fallback for older analysis outputs that only contain per-path summaries.
+    for fn, vals in accum.items():
+        by_fn[fn] = vals
+    return by_fn
+
+
 def main() -> int:
     """CLI entry point for benchmark CSV aggregation."""
     parser = argparse.ArgumentParser(
@@ -120,6 +192,17 @@ def main() -> int:
         "--cfg-glob",
         default="build/traces/*.cfg.ndjson",
         help="Glob for CFG NDJSON files (used if --cfg is not provided)",
+    )
+    parser.add_argument(
+        "--analysis",
+        action="append",
+        default=[],
+        help="Analysis NDJSON file(s), typically *.path_public.ndjson (repeatable)",
+    )
+    parser.add_argument(
+        "--analysis-glob",
+        default="",
+        help="Optional glob for analysis NDJSON files",
     )
     parser.add_argument("--out", required=True, help="Output CSV file")
     args = parser.parse_args()
@@ -140,6 +223,17 @@ def main() -> int:
         "elapsed_ms_median",
         "elapsed_ms_mean",
         "elapsed_runs",
+        "paths_analyzed",
+        "symex_inst_count",
+        "symex_def_count",
+        "query_count",
+        "sat_count",
+        "unsat_count",
+        "unknown_count",
+        "solver_time_ms",
+        "cache_hits",
+        "cache_misses",
+        "cache_hit_rate",
         "inst_count",
         "bb_count",
         "tx_count",
@@ -188,6 +282,40 @@ def main() -> int:
             row["elapsed_ms_mean"] = rs.get("elapsed_ms_mean")
             row["elapsed_runs"] = rs.get("elapsed_runs")
 
+    # Merge optional analysis summaries.
+    analysis_files: List[str] = []
+    if args.analysis:
+        analysis_files = sorted(args.analysis)
+    elif args.analysis_glob:
+        analysis_files = sorted(glob.glob(args.analysis_glob))
+    else:
+        for cfg in cfgs:
+            base = os.path.basename(cfg).replace(".cfg.ndjson", "")
+            candidate = os.path.join(os.path.dirname(cfg), f"{base}.path_public.ndjson")
+            if os.path.exists(candidate):
+                analysis_files.append(candidate)
+
+    analysis_by_base: Dict[str, Dict[str, dict]] = {}
+    for path in analysis_files:
+        analysis_by_base[_analysis_base(path)] = _load_analysis_summary(path)
+
+    for row in rows:
+        src = row.get("source", "")
+        fn = row.get("fn", "")
+        if not src or not fn:
+            continue
+        base = src.replace(".cfg.ndjson", "")
+        by_fn = analysis_by_base.get(base, {})
+        stats = by_fn.get(fn)
+        if not stats:
+            continue
+        row.update(stats)
+        hits = stats.get("cache_hits")
+        misses = stats.get("cache_misses")
+        if isinstance(hits, (int, float)) and isinstance(misses, (int, float)):
+            total = hits + misses
+            row["cache_hit_rate"] = (hits / total) if total > 0 else 0.0
+
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -195,12 +323,6 @@ def main() -> int:
             writer.writerow(row)
 
     return 0
-
-
-# TODO(person B): Add solver runtime columns once available.
-
-
-# TODO(person B): Add runtime columns once solver timing is available.
 
 
 if __name__ == "__main__":

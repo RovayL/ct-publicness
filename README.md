@@ -63,6 +63,77 @@ Current status
   - Constraint builder + dummy solver + minimal Z3 backend.
   - Path aggregation to public-at-point.
   - Stub path analysis to emit placeholder path_publicness.
+  - Minimal symexec (Z3) with dual execution, transmitter equality, and
+    PHI resolution based on predecessor block (when PHI operands include block labels).
+
+Project status log (latest)
+What is done
+- Toolchain and build are stable on Ubuntu (LLVM 18).
+- Person A LLVM pass:
+  - Emits NDJSON trace with stable IDs, optional type strings, and icmp/fcmp preds.
+  - Emits CFG/path records with path IDs, decisions, path conditions (string/json),
+    per-path pp_seq (optional), pp coverage (optional), and path summaries.
+  - Loop-bounded path enumeration with caps + pruning for constant branches/switch/indirect.
+  - Optional trace index (pp -> line) and trace truncation (max inst).
+- Scripts:
+  - gen_traces.sh supports budgets, repeat runs, run_summary stats, and BENCH_LIST.
+  - run_benchmarks.sh and metrics_pipeline.sh produce combined CSV summaries.
+  - benchmarks.md + benchmarks.txt document the suite and usage.
+- Person B Python:
+  - Parsers for trace/cfg/index and a pipeline to join paths with instruction streams.
+  - Minimal Z3-backed symexec (dual execution + transmitter equality).
+  - Path conditions consumed from structured `path_cond_json` (with string fallback).
+  - Per-path/function solver metrics: query counts, solver time, cache hits/misses.
+  - Aggregation to public_at_point.
+  - Utilities: join_trace_index, metrics, benchmarks, main CLI summaries.
+  - Z3 setup documented in symex/README.md.
+
+What is left
+- Improve memory model (array theory or SSA-style memory) to reduce false positives.
+- Expand opcode coverage and casts in symexec (e.g., div/rem, more conversions).
+- Validation: expand benchmark suite and summarize precision/runtime in report tables.
+- Add explicit handling/reporting for solver unknown/timeout budgets.
+
+Handoff (for a new session)
+Reproduce current artifacts
+```bash
+# Build LLVM pass
+cd build && ninja
+cd ..
+
+# Emit traces + CFG (with pp coverage + trace index)
+TRACE_INDEX=1 EMIT_PP_COVERAGE=1 PATH_COND_FORMAT=both ./scripts/gen_traces.sh
+```
+
+Run Person B minimal symexec + aggregation
+```bash
+source venv-ct-publicness/bin/activate
+python -m symex.analyze --mode symexec \
+  --trace build/traces/toy.ndjson \
+  --cfg build/traces/toy.cfg.ndjson \
+  --out path_public.ndjson
+python -m symex.aggregate \
+  --cfg build/traces/toy.cfg.ndjson \
+  --path-results path_public.ndjson \
+  --out public_at_point.ndjson
+```
+
+Run benchmarks + metrics
+```bash
+source venv-ct-publicness/bin/activate
+RUN_REPEAT=3 ./scripts/run_benchmarks.sh benchmarks.csv
+```
+
+Notes to remember
+- PHI resolution in symexec uses predecessor block labels; ensure traces include PHI
+  block operands (compile with optimization or run mem2reg).
+- PATH_COND_FORMAT can be string/json/both; symexec consumes `path_cond_json`
+  when present and falls back to string constraints otherwise.
+- `run_benchmarks.sh` now also emits:
+  - `build/traces/*.path_public.ndjson` (includes solver summaries),
+  - `build/traces/*.public_at_point.ndjson`,
+  - benchmark CSV columns for `query_count`, `solver_time_ms`, and cache stats.
+- If Z3 import fails, run: `python -m pip install -r symex/requirements.txt`.
 
 Where to look
 - LLVM pass: llvm-pass/PublicDataPass.cpp

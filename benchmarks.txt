@@ -1,3 +1,5 @@
 examples/toy.c
 examples/linear.c
 examples/loop.c
+examples/diversity.c
+examples/const_pruned.ll

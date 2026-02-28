@@ -20,6 +20,10 @@ Inputs from Person A
 Expected outputs (Person B)
 - Per-path results NDJSON (path_publicness):
   {"kind":"path_publicness","fn":"foo","path_id":0,"pp":"foo:bb0:i3","value":"v7","public":true}
+- Per-path solver stats NDJSON (path_analysis_summary):
+  {"kind":"path_analysis_summary","fn":"foo","path_id":0,"query_count":14,"solver_time_ms":3.2,...}
+- Per-function solver stats NDJSON (function_analysis_summary):
+  {"kind":"function_analysis_summary","fn":"foo","paths_analyzed":2,"query_count":33,"solver_time_ms":5.1,...}
 - Aggregated results NDJSON (public_at_point) via symex.aggregate:
   {"kind":"public_at_point","fn":"foo","pp":"foo:bb0:i3","value":"v7","public":true,...}
 
@@ -77,6 +81,10 @@ Where things stand
 - Solver: dummy solver + minimal Z3 backend in solver.py.
 - Symexec: minimal Z3-backed dual execution in symexec.py, with PHI resolution
   based on predecessor basic blocks when available.
+- Path conditions: structured `path_cond_json` is consumed directly by symexec
+  (fallback to string conditions when JSON is absent).
+- Performance: query caching and per-path/per-function solver timing counters
+  are emitted by analyze.py.
 - Aggregation: public_at_point computation in publicness.py + aggregate.py.
 - Analyzer: analyze.py supports stub and minimal symexec modes.
 
@@ -105,16 +113,11 @@ Code map
 - metrics.py: emits per-function CSV from summaries.
 - main.py: CLI summarizer.
 
-TODO (Person B)
-- Symbolic execution:
-  - Expand opcode coverage beyond the current MVP in symexec.py.
-  - Use trace types (def_ty/use_tys) to choose solver sorts.
-- Constraint solving:
-  - Encode rA != rB queries to decide publicness along a path.
-  - Cache path constraints and per-path solver contexts.
-- Output:
-  - Emit path_publicness for each (path_id, pp, value).
-  - Feed into aggregate.py to produce public_at_point.
+Remaining work (Person B)
+- Expand opcode coverage beyond the current MVP in symexec.py.
+- Improve memory modeling (array theory or SSA memory).
+- Improve sort precision using richer trace typing metadata.
+- Add solver timeout/unknown reporting with budget knobs.
 
 Helpful utilities
 - Trace index:

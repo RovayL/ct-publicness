@@ -1,0 +1,11 @@
+source,fn,elapsed_ms,elapsed_ms_min,elapsed_ms_max,elapsed_ms_median,elapsed_ms_mean,elapsed_runs,paths_analyzed,symex_inst_count,symex_def_count,query_count,sat_count,unsat_count,unknown_count,solver_time_ms,cache_hits,cache_misses,cache_hit_rate,inst_count,bb_count,tx_count,trace_emitted,trace_truncated,trace_max_inst,paths_emitted,truncated,max_paths,max_depth,max_loop_iters,cutoff_depth,cutoff_loop,const_pruned_br,const_pruned_switch,const_pruned_indirect,dfs_calls,dfs_leaves,dfs_prune_max_paths,dfs_prune_max_depth,dfs_prune_loop
+const_pruned.cfg.ndjson,const_pruned_br,11,11,12,12,11,3,1,5,2,2,2,0,0,0.232,1,1,0.5,7,4,1,7,False,0,1,False,200,256,0,False,False,1,0,0,3,1,0,0,0
+const_pruned.cfg.ndjson,const_pruned_switch,11,11,12,12,11,3,1,5,2,2,2,0,0,1.207,0,2,0.0,9,5,1,9,False,0,1,False,200,256,0,False,False,0,1,0,3,1,0,0,0
+diversity.cfg.ndjson,ct_branchless_select,13,13,13,13,13,3,1,23,17,17,12,5,0,4.93,3,14,0.17647058823529413,23,1,11,23,False,0,1,False,200,256,0,False,False,0,0,0,1,1,0,0,0
+diversity.cfg.ndjson,nct_secret_branch_index,13,13,13,13,13,3,2,41,27,27,13,14,0,10.608,2,25,0.07407407407407407,28,4,14,28,False,0,2,False,200,256,0,False,False,0,0,0,5,2,0,0,0
+linear.cfg.ndjson,linear_arith,12,11,13,12,12,3,1,20,14,14,9,5,0,100.75,3,11,0.21428571428571427,20,1,10,20,False,0,1,False,200,256,0,False,False,0,0,0,1,1,0,0,0
+linear.cfg.ndjson,linear_mem,12,11,13,12,12,3,1,27,19,19,10,9,0,3.386,8,11,0.42105263157894735,27,1,19,27,False,0,1,False,200,256,0,False,False,0,0,0,1,1,0,0,0
+linear.cfg.ndjson,linear_ptrcmp,12,11,13,12,12,3,1,9,6,6,3,3,0,0.856,0,6,0.0,9,1,4,9,False,0,1,False,200,256,0,False,False,0,0,0,1,1,0,0,0
+loop.cfg.ndjson,loop_branch,12,12,13,13,12,3,1,15,8,8,1,7,0,0.632,1,7,0.125,33,7,18,33,False,0,1,False,200,256,0,False,True,0,0,0,10,1,0,0,2
+loop.cfg.ndjson,loop_sum,12,12,13,13,12,3,1,15,8,8,1,7,0,0.0,8,0,1.0,27,4,15,27,False,0,1,False,200,256,0,False,True,0,0,0,5,1,0,0,1
+toy.cfg.ndjson,foo,15,11,23,11,15,3,2,51,33,33,15,18,0,4.948,8,25,0.24242424242424243,28,3,17,28,False,0,2,False,200,256,0,False,False,0,0,0,4,2,0,0,0
