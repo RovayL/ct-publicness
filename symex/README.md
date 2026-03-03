@@ -10,6 +10,9 @@ Inputs from Person A
 - Trace NDJSON: build/traces/*.ndjson
   - See ../TRACE_SCHEMA.md for the format.
   - Optional type strings (def_ty/use_tys) with -public-data-trace-types.
+  - Transmitters may be emitted as `txs` (multiple operands per instruction).
+  - Direct calls may include `callee`; aggregate ops may include
+    `extract_indices` or `insert_indices`.
 - CFG/path NDJSON: build/traces/*.cfg.ndjson
   - See ../CFG_SCHEMA.md for the format.
   - Includes path IDs, decisions, path constraints, and pp coverage.
@@ -24,8 +27,15 @@ Expected outputs (Person B)
   {"kind":"path_analysis_summary","fn":"foo","path_id":0,"query_count":14,"solver_time_ms":3.2,...}
 - Per-function solver stats NDJSON (function_analysis_summary):
   {"kind":"function_analysis_summary","fn":"foo","paths_analyzed":2,"query_count":33,"solver_time_ms":5.1,...}
+- Optional loop-invariant results NDJSON (`--loop-invariants`):
+  {"kind":"loop_invariant_publicness","fn":"foo","loop_id":0,"pp":"foo:bb2:i1","value":"v9","public":true,...}
+  {"kind":"loop_public_at_point","fn":"foo","pp":"foo:bb2:i1","value":"v9","public":true,"reason":"first_iter_public_assumed_subsequent",...}
 - Aggregated results NDJSON (public_at_point) via symex.aggregate:
   {"kind":"public_at_point","fn":"foo","pp":"foo:bb0:i3","value":"v7","public":true,...}
+  - Note: the baseline aggregator consumes only `path_publicness`. The
+    loop-invariant facts are emitted separately in the same analysis file.
+- Optional enhanced aggregate NDJSON (`--enhanced-out`):
+  {"kind":"enhanced_public_at_point","fn":"foo","pp":"foo:bb2:i1","value":"v9","public":true,"source":"loop_invariant_override",...}
 
 Workflow diagram
 ```
@@ -67,8 +77,14 @@ Workflow (in words)
    - `--mode stub` emits placeholder `public=None`.
    - `--mode symexec` calls `SymExecEngine.analyze_path()` in `symexec.py`,
      which executes each path twice and queries Z3 via `solver.py`.
+   - `--loop-invariants` additionally slices the first observed loop iteration
+     from a bounded loop path and emits a conservative heuristic: if a
+     loop-local SSA value is public on every first-iteration slice we observed
+     for that loop, we assume it stays public in later iterations.
 5) `aggregate.py` combines `path_publicness` + `cfg.ndjson` to compute
    `public_at_point` (public on all paths through a program point).
+   If `--enhanced-out` is requested, loop-invariant facts are also merged into
+   a second `enhanced_public_at_point` output.
 6) Optional utilities add detail:
    - `join_trace_index.py` annotates results with trace line numbers.
    - `main.py --check-paths` uses `constraints.py` to sanity-check path
@@ -81,10 +97,20 @@ Where things stand
 - Solver: dummy solver + minimal Z3 backend in solver.py.
 - Symexec: minimal Z3-backed dual execution in symexec.py, with PHI resolution
   based on predecessor basic blocks when available.
+- Transmitters: multi-operand transmitter equality is enforced when trace
+  records contain `txs`, which is needed for opcodes like division.
+- Calls: simple direct-call summaries are supported for straight-line direct
+  callees with no internal transmitters or path conditions.
+- Memory: loads, stores, and atomic ops are keyed by canonicalized symbolic
+  address expressions, improving memory sharing across recomputed addresses.
+- Aggregates: cmpxchg-style tuple values can flow through extractvalue and
+  insertvalue.
 - Path conditions: structured `path_cond_json` is consumed directly by symexec
   (fallback to string conditions when JSON is absent).
 - Performance: query caching and per-path/per-function solver timing counters
   are emitted by analyze.py.
+- Loops: `loop_invariants.py` can lift first-iteration publicness facts to
+  later iterations for the same static loop program point.
 - Aggregation: public_at_point computation in publicness.py + aggregate.py.
 - Analyzer: analyze.py supports stub and minimal symexec modes.
 
@@ -98,6 +124,11 @@ Quick start
    python3 -m symex.aggregate --cfg build/traces/toy.cfg.ndjson --path-results path_public.ndjson
 4) Minimal symexec (Z3 required):
    python3 -m symex.analyze --mode symexec --trace build/traces/toy.ndjson --cfg build/traces/toy.cfg.ndjson --out path_public.ndjson
+5) Loop-invariant heuristic over bounded loops:
+   MAX_LOOP_ITERS=1 ./scripts/gen_traces.sh
+   python3 -m symex.analyze --mode symexec --loop-invariants --trace build/traces/loop_invariant.ndjson --cfg build/traces/loop_invariant.cfg.ndjson --out build/traces/loop_invariant.path_public.ndjson
+6) Enhanced aggregate with loop facts:
+   python3 -m symex.aggregate --cfg build/traces/loop_invariant.cfg.ndjson --path-results build/traces/loop_invariant.path_public.ndjson --out build/traces/loop_invariant.public_at_point.ndjson --enhanced-out build/traces/loop_invariant.enhanced_public_at_point.ndjson
 
 Code map
 - models.py: dataclasses for trace, CFG, and result records.
@@ -107,6 +138,7 @@ Code map
 - solver.py: dummy solver + minimal Z3 backend.
 - analyze.py: stub per-path results (public=None).
 - symexec.py: minimal Z3-backed symbolic executor (MVP).
+- loop_invariants.py: first-iteration loop-slice extraction + invariant lifting.
 - aggregate.py: public_at_point aggregation.
 - publicness.py: core aggregation logic.
 - join_trace_index.py: adds line numbers to per-path results.

@@ -32,7 +32,7 @@ Edge records:
   "from":"bb0",
   "to":"bb1",
   "term_pp":"foo:bb0:i17",
-  "branch":"cond" | "uncond" | "switch" | "indirect",
+  "branch":"cond" | "uncond" | "switch" | "indirect" | "<other-terminator-opcode>",
   "cond":"v5",          // optional
   "sense":"true|false", // only for conditional branches
   "case":"const:i32:7", // only for switch cases
@@ -91,5 +91,6 @@ Function summary records:
   "tx_count":12,
   "trace_emitted":28,
   "trace_truncated":false,
-  "trace_max_inst":0
+  "trace_max_inst":0,
+  "arg_ids":["arg0","arg1"]
 }

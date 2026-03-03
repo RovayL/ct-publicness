@@ -131,6 +131,14 @@ def _load_analysis_summary(path: str) -> Dict[str, dict]:
             "cache_misses": 0,
         }
     )
+    loop_inv: Dict[str, dict] = defaultdict(
+        lambda: {
+            "loop_inv_total": 0,
+            "loop_inv_public_true": 0,
+            "loop_inv_public_false": 0,
+            "loop_inv_public_unknown": 0,
+        }
+    )
     if not os.path.exists(path):
         return by_fn
 
@@ -167,6 +175,23 @@ def _load_analysis_summary(path: str) -> Dict[str, dict]:
             a["solver_time_ms"] += float(rec.get("solver_time_ms", 0.0))
             a["cache_hits"] += int(rec.get("cache_hits", 0))
             a["cache_misses"] += int(rec.get("cache_misses", 0))
+        elif kind == "loop_invariant_publicness":
+            fn = rec.get("fn")
+            if not fn:
+                continue
+            a = loop_inv[fn]
+            a["loop_inv_total"] += 1
+            public = rec.get("public")
+            if public is True:
+                a["loop_inv_public_true"] += 1
+            elif public is False:
+                a["loop_inv_public_false"] += 1
+            else:
+                a["loop_inv_public_unknown"] += 1
+
+    for fn, vals in loop_inv.items():
+        by_fn.setdefault(fn, {})
+        by_fn[fn].update(vals)
 
     if by_fn:
         return by_fn
@@ -234,6 +259,10 @@ def main() -> int:
         "cache_hits",
         "cache_misses",
         "cache_hit_rate",
+        "loop_inv_total",
+        "loop_inv_public_true",
+        "loop_inv_public_false",
+        "loop_inv_public_unknown",
         "inst_count",
         "bb_count",
         "tx_count",

@@ -40,9 +40,12 @@ def load_trace(path: str) -> List[TraceInst]:
     """Load TraceInst records from a trace NDJSON file."""
     insts: List[TraceInst] = []
     for rec in read_ndjson(path):
-        tx = None
-        if "tx" in rec and rec["tx"] is not None:
-            tx = TxInfo(kind=rec["tx"]["kind"], which=int(rec["tx"]["which"]))
+        txs: List[TxInfo] = []
+        if "txs" in rec and rec["txs"] is not None:
+            for tx_rec in rec["txs"]:
+                txs.append(TxInfo(kind=tx_rec["kind"], which=int(tx_rec["which"])))
+        elif "tx" in rec and rec["tx"] is not None:
+            txs.append(TxInfo(kind=rec["tx"]["kind"], which=int(rec["tx"]["which"])))
         insts.append(
             TraceInst(
                 fn=rec["fn"],
@@ -51,11 +54,15 @@ def load_trace(path: str) -> List[TraceInst]:
                 op=rec["op"],
                 def_id=rec.get("def"),
                 uses=list(rec.get("uses", [])),
-                tx=tx,
+                txs=txs,
                 def_ty=rec.get("def_ty"),
                 use_tys=rec.get("use_tys"),
                 icmp_pred=rec.get("icmp_pred"),
                 fcmp_pred=rec.get("fcmp_pred"),
+                atomic_op=rec.get("atomic_op"),
+                callee=rec.get("callee"),
+                extract_indices=rec.get("extract_indices"),
+                insert_indices=rec.get("insert_indices"),
             )
         )
     return insts
@@ -95,6 +102,7 @@ def load_func_summary(path: str) -> List[FuncSummary]:
                 trace_emitted=int(rec.get("trace_emitted", 0)),
                 trace_truncated=bool(rec.get("trace_truncated", False)),
                 trace_max_inst=int(rec.get("trace_max_inst", 0)),
+                arg_ids=list(rec.get("arg_ids", [])),
             )
         )
     return out

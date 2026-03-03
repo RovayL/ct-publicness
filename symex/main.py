@@ -17,7 +17,7 @@ def summarize_trace(trace_path: str, index_path: str | None) -> None:
     insts = load_trace(trace_path)
     fns = sorted({i.fn for i in insts})
     op_counts = Counter(i.op for i in insts)
-    tx_count = sum(1 for i in insts if i.tx is not None)
+    tx_count = sum(len(i.txs) for i in insts)
 
     print(f"trace: {trace_path}")
     print(f"  instructions: {len(insts)}")

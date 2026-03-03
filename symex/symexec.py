@@ -10,11 +10,14 @@ point for Person B to extend.
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 from .models import TraceInst
 from .publicness import PathPublicness
 from .solver import Z3Solver
+
+if TYPE_CHECKING:
+    from .pipeline import FunctionPipeline
 
 
 @dataclass
@@ -94,6 +97,16 @@ def _as_bv(z3, expr: object, width: int) -> object:
     return expr
 
 
+def _as_real(z3, expr: object) -> object:
+    if z3.is_real(expr):
+        return expr
+    if z3.is_int(expr):
+        return z3.ToReal(expr)
+    if z3.is_bv(expr):
+        return z3.ToReal(z3.BV2Int(expr))
+    return expr
+
+
 def _icmp_pred(z3, pred: str, a: object, b: object, signed: bool) -> object:
     if pred in ("eq", "oeq", "ueq"):
         return a == b
@@ -124,15 +137,158 @@ def _icmp_pred(z3, pred: str, a: object, b: object, signed: bool) -> object:
 class SymExecEngine:
     """Execute a path trace twice and query publicness via Z3."""
 
-    def __init__(self, ptr_width: int = 64, enable_query_cache: bool = True) -> None:
+    def __init__(
+        self,
+        ptr_width: int = 64,
+        enable_query_cache: bool = True,
+        function_pipelines: Optional[Dict[str, "FunctionPipeline"]] = None,
+    ) -> None:
         self.ptr_width = ptr_width
         self.enable_query_cache = enable_query_cache
         self._query_cache: Dict[str, Optional[bool]] = {}
+        self.function_pipelines = function_pipelines or {}
 
     def _fresh(self, z3, state: SymState, name: str, width: int) -> object:
         sym = z3.BitVec(f"{state.tag}_{name}_{state.fresh_id}", width)
         state.fresh_id += 1
         return sym
+
+    def _mem_key(self, z3, expr: object, fallback: str) -> str:
+        if isinstance(expr, tuple):
+            return fallback
+        try:
+            if z3.is_bool(expr):
+                return z3.simplify(expr).sexpr()
+            if z3.is_bv(expr):
+                return z3.simplify(_as_bv(z3, expr, self.ptr_width)).sexpr()
+            if z3.is_int(expr) or z3.is_real(expr) or z3.is_string(expr):
+                return z3.simplify(expr).sexpr()
+        except Exception:
+            return fallback
+        return fallback
+
+    def _neq_expr(self, z3, lhs: object, rhs: object) -> Optional[object]:
+        if isinstance(lhs, tuple) and isinstance(rhs, tuple) and len(lhs) == len(rhs):
+            terms = []
+            for l_item, r_item in zip(lhs, rhs):
+                term = self._neq_expr(z3, l_item, r_item)
+                if term is None:
+                    return None
+                terms.append(term)
+            if not terms:
+                return z3.BoolVal(False)
+            return z3.Or(*terms)
+        if type(lhs) != type(rhs) and not (
+            hasattr(lhs, "sexpr") and hasattr(rhs, "sexpr")
+        ):
+            return None
+        try:
+            return lhs != rhs
+        except Exception:
+            return None
+
+    def _aggregate_fill(
+        self,
+        z3,
+        state: SymState,
+        width: int,
+        name: str,
+    ) -> object:
+        return self._fresh(z3, state, name, width)
+
+    def _insert_aggregate(
+        self,
+        z3,
+        state: SymState,
+        aggregate: object,
+        indices: Sequence[int],
+        value: object,
+        width: int,
+        name: str,
+    ) -> object:
+        if not indices:
+            return value
+        idx = indices[0]
+        elems = list(aggregate) if isinstance(aggregate, tuple) else []
+        while len(elems) <= idx:
+            elems.append(
+                self._aggregate_fill(z3, state, width, f"{name}_{len(elems)}")
+            )
+        if len(indices) == 1:
+            elems[idx] = value
+        else:
+            child = elems[idx] if isinstance(elems[idx], tuple) else ()
+            elems[idx] = self._insert_aggregate(
+                z3,
+                state,
+                child,
+                indices[1:],
+                value,
+                width,
+                f"{name}_{idx}",
+            )
+        return tuple(elems)
+
+    def _can_inline_callee(
+        self,
+        callee: Optional[str],
+        callstack: Sequence[str],
+    ) -> bool:
+        if not callee or callee in callstack:
+            return False
+        pipe = self.function_pipelines.get(callee)
+        if pipe is None or pipe.func_summary is None:
+            return False
+        if len(pipe.paths) != 1:
+            return False
+        path = pipe.paths[0].path
+        if path.path_cond or path.path_cond_json:
+            return False
+        for inst in pipe.paths[0].insts:
+            if inst.txs:
+                return False
+        return True
+
+    def _eval_direct_callee(
+        self,
+        z3,
+        callee: str,
+        arg_values: Sequence[object],
+        state: SymState,
+        exec_tag: str,
+        callstack: Sequence[str],
+    ) -> Optional[object]:
+        pipe = self.function_pipelines.get(callee)
+        if pipe is None or pipe.func_summary is None or len(pipe.paths) != 1:
+            return None
+
+        sub = SymState(tag=state.tag, env={}, mem=state.mem, fresh_id=state.fresh_id)
+        for formal, actual in zip(pipe.func_summary.arg_ids, arg_values):
+            sub.env[formal] = actual
+
+        prev_bb = None
+        current_bb = None
+        ret_expr: Optional[object] = None
+        for inst in pipe.paths[0].insts:
+            if inst.bb != current_bb:
+                prev_bb = current_bb
+                current_bb = inst.bb
+            self._eval_inst(
+                z3,
+                inst,
+                sub,
+                exec_tag,
+                prev_bb,
+                callstack=tuple(callstack) + (callee,),
+            )
+            if inst.op == "ret" and inst.uses:
+                width = self.ptr_width
+                if inst.use_tys and inst.use_tys[0]:
+                    width = _parse_ty_width(inst.use_tys[0], self.ptr_width)
+                ret_expr = self._eval_operand(z3, sub, inst.uses[0], width)
+
+        state.fresh_id = sub.fresh_id
+        return ret_expr
 
     def _eval_operand(
         self,
@@ -294,6 +450,7 @@ class SymExecEngine:
         state: SymState,
         exec_tag: str,
         prev_bb: Optional[str],
+        callstack: Sequence[str] = (),
     ) -> Optional[object]:
         op = inst.op
         def_id = inst.def_id
@@ -313,21 +470,76 @@ class SymExecEngine:
                 state.env[def_id] = self._fresh(z3, state, f"alloca_{exec_tag}", self.ptr_width)
             return None
         if op == "load":
+            ptr_expr = get_op(0)
             ptr_id = inst.uses[0] if inst.uses else "unknown_ptr"
-            if ptr_id in state.mem:
-                val = state.mem[ptr_id]
+            mem_key = self._mem_key(z3, ptr_expr, ptr_id)
+            if mem_key in state.mem:
+                val = state.mem[mem_key]
             else:
                 val = self._fresh(z3, state, f"load_{exec_tag}_{ptr_id}", def_width)
-                state.mem[ptr_id] = val
+                state.mem[mem_key] = val
             if def_id:
                 state.env[def_id] = val
             return val
         if op == "store":
             if len(inst.uses) >= 2:
                 val = get_op(0)
+                ptr_expr = get_op(1)
                 ptr_id = inst.uses[1]
-                state.mem[ptr_id] = val
+                state.mem[self._mem_key(z3, ptr_expr, ptr_id)] = val
             return None
+        if op == "atomicrmw":
+            ptr_expr = get_op(0)
+            ptr_id = inst.uses[0] if inst.uses else "unknown_ptr"
+            mem_key = self._mem_key(z3, ptr_expr, ptr_id)
+            old = state.mem.get(mem_key)
+            if old is None:
+                old = self._fresh(z3, state, f"atomic_old_{exec_tag}_{ptr_id}", def_width)
+            if len(inst.uses) >= 2:
+                val = _as_bv(z3, get_op(1), def_width)
+                cur = _as_bv(z3, old, def_width)
+                atomic_op = inst.atomic_op or ""
+                if atomic_op == "add":
+                    new = cur + val
+                elif atomic_op == "sub":
+                    new = cur - val
+                elif atomic_op == "and":
+                    new = cur & val
+                elif atomic_op == "or":
+                    new = cur | val
+                elif atomic_op == "xor":
+                    new = cur ^ val
+                elif atomic_op == "nand":
+                    new = ~(cur & val)
+                elif atomic_op == "xchg":
+                    new = val
+                else:
+                    new = self._fresh(z3, state, f"atomic_new_{exec_tag}_{ptr_id}", def_width)
+                state.mem[mem_key] = _as_bv(z3, new, def_width)
+            if def_id:
+                state.env[def_id] = old
+            return old
+        if op == "cmpxchg":
+            ptr_expr = get_op(0)
+            ptr_id = inst.uses[0] if inst.uses else "unknown_ptr"
+            mem_key = self._mem_key(z3, ptr_expr, ptr_id)
+            old = state.mem.get(mem_key)
+            if old is None:
+                old = self._fresh(z3, state, f"cmpxchg_old_{exec_tag}_{ptr_id}", def_width)
+            if len(inst.uses) >= 3:
+                cmp_val = _as_bv(z3, get_op(1), def_width)
+                new_val = _as_bv(z3, get_op(2), def_width)
+                cur = _as_bv(z3, old, def_width)
+                success = cur == cmp_val
+                state.mem[mem_key] = z3.If(success, new_val, cur)
+            else:
+                success = z3.BoolVal(False)
+            if def_id:
+                state.env[def_id] = (
+                    old,
+                    z3.If(success, z3.BitVecVal(1, 1), z3.BitVecVal(0, 1)),
+                )
+            return state.env.get(def_id, old)
         if op in ("add", "sub", "mul", "and", "or", "xor", "shl", "lshr", "ashr"):
             a = _as_bv(z3, get_op(0), def_width)
             b = _as_bv(z3, get_op(1), def_width)
@@ -352,6 +564,30 @@ class SymExecEngine:
             if def_id:
                 state.env[def_id] = expr
             return expr
+        if op in ("sdiv", "udiv", "srem", "urem"):
+            a = _as_bv(z3, get_op(0), def_width)
+            b = _as_bv(z3, get_op(1), def_width)
+            if op == "sdiv":
+                expr = a / b
+            elif op == "udiv":
+                expr = z3.UDiv(a, b)
+            elif op == "srem":
+                expr = z3.SRem(a, b)
+            else:
+                expr = z3.URem(a, b)
+            if def_id:
+                state.env[def_id] = expr
+            return expr
+        if op == "fdiv":
+            expr = _as_real(z3, get_op(0)) / _as_real(z3, get_op(1))
+            if def_id:
+                state.env[def_id] = expr
+            return expr
+        if op == "frem":
+            expr = self._fresh_typed(z3, state, f"frem_{exec_tag}", "real", None)
+            if def_id:
+                state.env[def_id] = expr
+            return expr
         if op == "icmp":
             pred = inst.icmp_pred or "eq"
             a = _as_bv(z3, get_op(0), def_width)
@@ -370,6 +606,47 @@ class SymExecEngine:
                 expr = z3.ZeroExt(to_width - from_width, _as_bv(z3, a, from_width))
             else:
                 expr = z3.SignExt(to_width - from_width, _as_bv(z3, a, from_width))
+            if def_id:
+                state.env[def_id] = expr
+            return expr
+        if op in ("bitcast", "addrspacecast", "ptrtoint", "inttoptr"):
+            expr = get_op(0)
+            if op in ("ptrtoint", "inttoptr"):
+                expr = _as_bv(z3, expr, def_width)
+            if def_id:
+                state.env[def_id] = expr
+            return expr
+        if op == "extractvalue":
+            agg = get_op(0)
+            expr: object
+            cur = agg
+            ok = isinstance(cur, tuple) and bool(inst.extract_indices)
+            if ok:
+                for idx in inst.extract_indices or ():
+                    if isinstance(cur, tuple) and 0 <= idx < len(cur):
+                        cur = cur[idx]
+                    else:
+                        ok = False
+                        break
+            if ok:
+                expr = cur
+            else:
+                expr = self._fresh(z3, state, f"extract_{exec_tag}", def_width)
+            if def_id:
+                state.env[def_id] = expr
+            return expr
+        if op == "insertvalue":
+            agg = get_op(0)
+            val = get_op(1)
+            expr = self._insert_aggregate(
+                z3,
+                state,
+                agg,
+                list(inst.insert_indices or ()),
+                val,
+                def_width,
+                f"insert_{exec_tag}",
+            )
             if def_id:
                 state.env[def_id] = expr
             return expr
@@ -423,7 +700,23 @@ class SymExecEngine:
             if def_id:
                 state.env[def_id] = expr
             return expr
-        if op == "call":
+        if op in ("call", "invoke", "callbr"):
+            if self._can_inline_callee(inst.callee, callstack):
+                pipe = self.function_pipelines[inst.callee]
+                arg_count = len(pipe.func_summary.arg_ids) if pipe.func_summary else 0
+                arg_values = [get_op(i) for i in range(min(arg_count, len(inst.uses)))]
+                expr = self._eval_direct_callee(
+                    z3,
+                    inst.callee,
+                    arg_values,
+                    state,
+                    exec_tag,
+                    callstack,
+                )
+                if expr is not None:
+                    if def_id:
+                        state.env[def_id] = expr
+                    return expr
             if def_id:
                 state.env[def_id] = self._fresh(z3, state, f"call_{exec_tag}", def_width)
             return None
@@ -457,13 +750,15 @@ class SymExecEngine:
             if inst.bb != current_bb:
                 prev_bb = current_bb
                 current_bb = inst.bb
-            self._eval_inst(z3, inst, state_a, "A", prev_bb)
-            self._eval_inst(z3, inst, state_b, "B", prev_bb)
-            if inst.tx and inst.tx.which < len(inst.uses):
-                op_id = inst.uses[inst.tx.which]
+            self._eval_inst(z3, inst, state_a, "A", prev_bb, callstack=(inst.fn,))
+            self._eval_inst(z3, inst, state_b, "B", prev_bb, callstack=(inst.fn,))
+            for tx in inst.txs:
+                if tx.which >= len(inst.uses):
+                    continue
+                op_id = inst.uses[tx.which]
                 op_width = self.ptr_width
-                if inst.use_tys and inst.tx.which < len(inst.use_tys):
-                    op_width = _parse_ty_width(inst.use_tys[inst.tx.which], self.ptr_width)
+                if inst.use_tys and tx.which < len(inst.use_tys):
+                    op_width = _parse_ty_width(inst.use_tys[tx.which], self.ptr_width)
                 a_expr = self._eval_operand(z3, state_a, op_id, op_width)
                 b_expr = self._eval_operand(z3, state_b, op_id, op_width)
                 tx_equalities.append(a_expr == b_expr)
@@ -515,7 +810,19 @@ class SymExecEngine:
                 )
                 continue
 
-            diff_expr = a_expr != b_expr
+            diff_expr = self._neq_expr(z3, a_expr, b_expr)
+            if diff_expr is None:
+                unknown_count += 1
+                results.append(
+                    PathPublicness(
+                        fn=inst.fn,
+                        path_id=path_id,
+                        pp=inst.pp,
+                        value=inst.def_id,
+                        public=None,
+                    )
+                )
+                continue
             query_key = hashlib.sha256(
                 f"{base_key}|{diff_expr.sexpr()}".encode("utf-8")
             ).hexdigest()

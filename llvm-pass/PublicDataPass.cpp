@@ -225,39 +225,71 @@ static void printTransmitter(const Instruction &I, StringRef kind,
 
 // Transmitter metadata (kind and operand index).
 struct TxInfo {
-  bool present = false;
   const char *kind = nullptr;
   int operandIndex = -1;
 };
 
-// Identify transmitters per project sheet (minimum set).
-// Output: TxInfo with present=false if not a transmitter.
-static TxInfo getTransmitterInfo(const Instruction &I) {
+static void addTx(std::vector<TxInfo> &out, const char *kind, int operandIndex) {
   TxInfo info;
+  info.kind = kind;
+  info.operandIndex = operandIndex;
+  out.push_back(info);
+}
+
+static std::string atomicRmwOpName(AtomicRMWInst::BinOp op) {
+  switch (op) {
+    case AtomicRMWInst::Xchg: return "xchg";
+    case AtomicRMWInst::Add: return "add";
+    case AtomicRMWInst::Sub: return "sub";
+    case AtomicRMWInst::And: return "and";
+    case AtomicRMWInst::Nand: return "nand";
+    case AtomicRMWInst::Or: return "or";
+    case AtomicRMWInst::Xor: return "xor";
+    case AtomicRMWInst::Max: return "max";
+    case AtomicRMWInst::Min: return "min";
+    case AtomicRMWInst::UMax: return "umax";
+    case AtomicRMWInst::UMin: return "umin";
+    case AtomicRMWInst::FAdd: return "fadd";
+    case AtomicRMWInst::FSub: return "fsub";
+    default: return "unknown";
+  }
+}
+
+// Identify transmitter operands under the current leakage model.
+static std::vector<TxInfo> getTransmitterInfos(const Instruction &I) {
+  std::vector<TxInfo> out;
   if (isa<LoadInst>(I)) {
-    info.present = true;
-    info.kind = "load.addr";
-    info.operandIndex = 0;
+    addTx(out, "load.addr", 0);
   } else if (isa<StoreInst>(I)) {
-    info.present = true;
-    info.kind = "store.addr";
-    info.operandIndex = 1;
+    addTx(out, "store.addr", 1);
+  } else if (isa<AtomicRMWInst>(I)) {
+    addTx(out, "atomicrmw.addr", 0);
+  } else if (isa<AtomicCmpXchgInst>(I)) {
+    addTx(out, "cmpxchg.addr", 0);
   } else if (auto *BI = dyn_cast<BranchInst>(&I)) {
     if (BI->isConditional()) {
-      info.present = true;
-      info.kind = "br.cond";
-      info.operandIndex = 0;
+      addTx(out, "br.cond", 0);
     }
   } else if (isa<SwitchInst>(I)) {
-    info.present = true;
-    info.kind = "switch.cond";
-    info.operandIndex = 0;
+    addTx(out, "switch.cond", 0);
   } else if (isa<IndirectBrInst>(I)) {
-    info.present = true;
-    info.kind = "indirectbr.target";
-    info.operandIndex = 0;
+    addTx(out, "indirectbr.target", 0);
+  } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+    if (CB->arg_size() != CB->getNumOperands()) {
+      addTx(out, "call.target", CB->getCalledOperandUse().getOperandNo());
+    }
+  } else if (I.getOpcode() == Instruction::SDiv ||
+             I.getOpcode() == Instruction::UDiv ||
+             I.getOpcode() == Instruction::FDiv) {
+    addTx(out, "div.operand", 0);
+    addTx(out, "div.operand", 1);
+  } else if (I.getOpcode() == Instruction::SRem ||
+             I.getOpcode() == Instruction::URem ||
+             I.getOpcode() == Instruction::FRem) {
+    addTx(out, "rem.operand", 0);
+    addTx(out, "rem.operand", 1);
   }
-  return info;
+  return out;
 }
 
 // Convert an integer constant to a stable ID string.
@@ -473,6 +505,11 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
 
     DenseMap<const Value *, std::string> valueIds;
     unsigned nextValueId = 0;
+    std::vector<std::string> argIds;
+    argIds.reserve(F.arg_size());
+    for (const Argument &A : F.args()) {
+      argIds.push_back(getValueId(&A, valueIds, nextValueId));
+    }
     DenseMap<const Instruction *, std::string> instPP;
     DenseMap<const BasicBlock *, std::vector<std::string>> bbPpSeq;
     DenseMap<const BasicBlock *, std::string> termPP;
@@ -524,17 +561,19 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
           errs() << "\n";
         }
 
-        TxInfo tx = getTransmitterInfo(I);
-        if (tx.present && !quiet) {
-          const Value *op = nullptr;
-          if (tx.operandIndex >= 0 &&
-              tx.operandIndex < static_cast<int>(I.getNumOperands())) {
-            op = I.getOperand(tx.operandIndex);
+        std::vector<TxInfo> txs = getTransmitterInfos(I);
+        if (!txs.empty() && !quiet) {
+          for (const TxInfo &tx : txs) {
+            const Value *op = nullptr;
+            if (tx.operandIndex >= 0 &&
+                tx.operandIndex < static_cast<int>(I.getNumOperands())) {
+              op = I.getOperand(tx.operandIndex);
+            }
+            printTransmitter(I, tx.kind, op);
           }
-          printTransmitter(I, tx.kind, op);
         }
-        if (tx.present) {
-          txCount++;
+        if (!txs.empty()) {
+          txCount += txs.size();
         }
 
         if (trace) {
@@ -604,12 +643,52 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
             *trace << ",\"fcmp_pred\":";
             emitJsonString(*trace, FCmpInst::getPredicateName(FC->getPredicate()));
           }
-          if (tx.present) {
+          if (auto *CB = dyn_cast<CallBase>(&I)) {
+            if (const Function *Callee = CB->getCalledFunction()) {
+              *trace << ",\"callee\":";
+              emitJsonString(*trace, Callee->getName());
+            }
+          }
+          if (auto *EV = dyn_cast<ExtractValueInst>(&I)) {
+            *trace << ",\"extract_indices\":[";
+            bool first = true;
+            for (unsigned idxVal : EV->getIndices()) {
+              if (!first) *trace << ",";
+              *trace << idxVal;
+              first = false;
+            }
+            *trace << "]";
+          }
+          if (auto *IV = dyn_cast<InsertValueInst>(&I)) {
+            *trace << ",\"insert_indices\":[";
+            bool first = true;
+            for (unsigned idxVal : IV->getIndices()) {
+              if (!first) *trace << ",";
+              *trace << idxVal;
+              first = false;
+            }
+            *trace << "]";
+          }
+          if (!txs.empty()) {
+            *trace << ",\"txs\":[";
+            for (size_t i = 0; i < txs.size(); ++i) {
+              if (i) *trace << ",";
+              *trace << "{";
+              *trace << "\"kind\":";
+              emitJsonString(*trace, txs[i].kind);
+              *trace << ",\"which\":" << txs[i].operandIndex;
+              *trace << "}";
+            }
+            *trace << "]";
             *trace << ",\"tx\":{";
             *trace << "\"kind\":";
-            emitJsonString(*trace, tx.kind);
-            *trace << ",\"which\":" << tx.operandIndex;
+            emitJsonString(*trace, txs.front().kind);
+            *trace << ",\"which\":" << txs.front().operandIndex;
             *trace << "}";
+          }
+          if (auto *ARMW = dyn_cast<AtomicRMWInst>(&I)) {
+            *trace << ",\"atomic_op\":";
+            emitJsonString(*trace, atomicRmwOpName(ARMW->getOperation()));
           }
           *trace << "}\n";
 
@@ -637,6 +716,8 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
       *cfg << ",\"trace_emitted\":" << traceEmitted;
       *cfg << ",\"trace_truncated\":" << (traceTruncated ? "true" : "false");
       *cfg << ",\"trace_max_inst\":" << MaxInst;
+      *cfg << ",\"arg_ids\":";
+      emitJsonStringArray(*cfg, argIds);
       *cfg << "}\n";
 
       for (auto &BB : F) {
@@ -768,6 +849,21 @@ struct PublicDataPass : PassInfoMixin<PublicDataPass> {
             emitJsonString(*cfg, termPP[&BB]);
             *cfg << ",\"branch\":\"indirect\",\"target\":";
             emitJsonString(*cfg, targetId);
+            *cfg << "}\n";
+          }
+        } else {
+          for (unsigned i = 0; i < T->getNumSuccessors(); ++i) {
+            *cfg << "{";
+            *cfg << "\"kind\":\"edge\",\"fn\":";
+            emitJsonString(*cfg, F.getName());
+            *cfg << ",\"from\":";
+            emitJsonString(*cfg, bbLabels[&BB]);
+            *cfg << ",\"to\":";
+            emitJsonString(*cfg, bbLabels[T->getSuccessor(i)]);
+            *cfg << ",\"term_pp\":";
+            emitJsonString(*cfg, termPP[&BB]);
+            *cfg << ",\"branch\":";
+            emitJsonString(*cfg, T->getOpcodeName());
             *cfg << "}\n";
           }
         }

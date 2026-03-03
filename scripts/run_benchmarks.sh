@@ -18,11 +18,13 @@ RUN_REPEAT="${RUN_REPEAT:-1}"
 RUN_SYMEX="${RUN_SYMEX:-1}"
 ANALYZE_MODE="${ANALYZE_MODE:-symexec}"
 ANALYZE_NO_CACHE="${ANALYZE_NO_CACHE:-0}"
+ANALYZE_LOOP_INVARIANTS="${ANALYZE_LOOP_INVARIANTS:-0}"
 AGGREGATE_RESULTS="${AGGREGATE_RESULTS:-1}"
+AGGREGATE_ENHANCED="${AGGREGATE_ENHANCED:-1}"
 
 export TRACE_INDEX TRACE_TYPES EMIT_PP_COVERAGE INCLUDE_PP_SEQ PATH_COND_FORMAT
 export MAX_PATHS MAX_PATH_DEPTH MAX_LOOP_ITERS MAX_INST
-export BENCH_LIST EMIT_RUN_SUMMARY RUN_REPEAT RUN_SYMEX ANALYZE_MODE ANALYZE_NO_CACHE AGGREGATE_RESULTS
+export BENCH_LIST EMIT_RUN_SUMMARY RUN_REPEAT RUN_SYMEX ANALYZE_MODE ANALYZE_NO_CACHE ANALYZE_LOOP_INVARIANTS AGGREGATE_RESULTS AGGREGATE_ENHANCED
 ./scripts/gen_traces.sh
 
 OUT="${1:-${ROOT}/benchmarks.csv}"
@@ -61,12 +63,17 @@ if [[ "${RUN_SYMEX}" == "1" ]]; then
   if [[ "${ANALYZE_NO_CACHE}" == "1" ]]; then
     no_cache_arg=(--no-cache)
   fi
+  loop_inv_arg=()
+  if [[ "${ANALYZE_LOOP_INVARIANTS}" == "1" ]]; then
+    loop_inv_arg=(--loop-invariants)
+  fi
   for cfg in "${cfg_files[@]}"; do
     base="$(basename "${cfg}" .cfg.ndjson)"
     dir="$(dirname "${cfg}")"
     trace="${dir}/${base}.ndjson"
     path_public="${dir}/${base}.path_public.ndjson"
     public_at_point="${dir}/${base}.public_at_point.ndjson"
+    enhanced_public_at_point="${dir}/${base}.enhanced_public_at_point.ndjson"
     if [[ ! -f "${trace}" ]]; then
       echo "Skipping symexec: trace not found for ${cfg} (${trace})" >&2
       continue
@@ -76,12 +83,18 @@ if [[ "${RUN_SYMEX}" == "1" ]]; then
       --trace "${trace}" \
       --cfg "${cfg}" \
       --out "${path_public}" \
+      "${loop_inv_arg[@]}" \
       "${no_cache_arg[@]}"
     if [[ "${AGGREGATE_RESULTS}" == "1" ]]; then
+      enhanced_arg=()
+      if [[ "${AGGREGATE_ENHANCED}" == "1" ]]; then
+        enhanced_arg=(--enhanced-out "${enhanced_public_at_point}")
+      fi
       python3 -m symex.aggregate \
         --cfg "${cfg}" \
         --path-results "${path_public}" \
-        --out "${public_at_point}"
+        --out "${public_at_point}" \
+        "${enhanced_arg[@]}"
     fi
   done
 fi

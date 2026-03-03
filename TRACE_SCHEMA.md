@@ -11,13 +11,18 @@ Fields:
 - uses: array of operand ids (strings). For PHI, operands are emitted as
   value/block pairs, where block entries use the basic block label string
   (same labels as CFG records).
-- tx: optional transmitter object with:
+- txs: optional array of transmitter objects, each with:
   - kind: transmitter kind (string)
   - which: LLVM operand index for the transmitter (int)
+- tx: optional compatibility alias for the first transmitter in txs
 - def_ty: optional LLVM type string for def
 - use_tys: optional LLVM type strings for uses (parallel to uses list)
 - icmp_pred: optional predicate string for ICmpInst (e.g., "eq", "slt")
 - fcmp_pred: optional predicate string for FCmpInst (e.g., "oeq", "ult")
+- atomic_op: optional operation name for AtomicRMWInst (e.g., "add", "xor")
+- callee: optional direct callee name for call/invoke/callbr
+- extract_indices: optional index list for ExtractValueInst
+- insert_indices: optional index list for InsertValueInst
 
 Trace index (optional)
 If -public-data-trace-index is provided, an index NDJSON file is produced:
@@ -30,3 +35,10 @@ SSA value ids:
 - const:null / const:undef / const:poison for special constants
 - const:<printed> for other constant kinds (e.g., aggregates/exprs)
 - v<N> for generated ids
+
+Current transmitter kinds
+- `load.addr`, `store.addr`
+- `atomicrmw.addr`, `cmpxchg.addr`
+- `br.cond`, `switch.cond`, `indirectbr.target`
+- `call.target` for call/invoke/callbr callee operands
+- `div.operand`, `rem.operand` for division and remainder operands

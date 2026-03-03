@@ -6,6 +6,7 @@ import argparse
 import json
 from collections import defaultdict
 
+from .loop_invariants import analyze_loop_invariants
 from .pipeline import build_pipeline
 from .symexec import SymExecEngine
 
@@ -44,10 +45,11 @@ def emit_path_publicness_symexec(
     cfg_path: str,
     out_path: str,
     use_cache: bool = True,
+    emit_loop_invariants: bool = False,
 ) -> None:
     """Run minimal symexec per path and emit path_publicness records."""
     pipes = build_pipeline(trace_path, cfg_path)
-    engine = SymExecEngine(enable_query_cache=use_cache)
+    engine = SymExecEngine(enable_query_cache=use_cache, function_pipelines=pipes)
     with open(out_path, "w", encoding="utf-8") as f:
         for fn, pipe in pipes.items():
             fn_stats = defaultdict(float)
@@ -121,6 +123,41 @@ def emit_path_publicness_symexec(
                     )
                     + "\n"
                 )
+            if emit_loop_invariants:
+                inv_records = analyze_loop_invariants(pipe, engine=engine)
+                for rec in inv_records:
+                    f.write(
+                        json.dumps(
+                            {
+                                "kind": "loop_invariant_publicness",
+                                "fn": rec.fn,
+                                "loop_id": rec.loop_id,
+                                "pp": rec.pp,
+                                "value": rec.value,
+                                "public": rec.public,
+                                "support_paths": rec.support_paths,
+                                "first_iter_paths": rec.first_iter_paths,
+                                "evidence_path_ids": list(rec.evidence_path_ids),
+                            }
+                        )
+                        + "\n"
+                    )
+                    f.write(
+                        json.dumps(
+                            {
+                                "kind": "loop_public_at_point",
+                                "fn": rec.fn,
+                                "pp": rec.pp,
+                                "value": rec.value,
+                                "public": rec.public,
+                                "reason": "first_iter_public_assumed_subsequent",
+                                "loop_id": rec.loop_id,
+                                "support_paths": rec.support_paths,
+                                "first_iter_paths": rec.first_iter_paths,
+                            }
+                        )
+                        + "\n"
+                    )
 
 
 def main() -> int:
@@ -142,11 +179,20 @@ def main() -> int:
         action="store_true",
         help="Disable solver query cache in symexec mode",
     )
+    parser.add_argument(
+        "--loop-invariants",
+        action="store_true",
+        help="Emit loop-invariant publicness from first-iteration loop slices",
+    )
     args = parser.parse_args()
 
     if args.mode == "symexec":
         emit_path_publicness_symexec(
-            args.trace, args.cfg, args.out, use_cache=not args.no_cache
+            args.trace,
+            args.cfg,
+            args.out,
+            use_cache=not args.no_cache,
+            emit_loop_invariants=args.loop_invariants,
         )
     else:
         emit_path_publicness_stub(args.trace, args.cfg, args.out)

@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-from .models import CfgBlock, CfgEdge, CfgPath, PathSummary, PpCoverage, TraceInst, TraceIndex
-from .parser import load_inputs, load_trace_index
+from .models import CfgBlock, CfgEdge, CfgPath, FuncSummary, PathSummary, PpCoverage, TraceInst, TraceIndex
+from .parser import load_func_summary, load_inputs, load_trace_index
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,7 @@ class FunctionPipeline:
     edges: List[CfgEdge]
     paths: List[PathBundle]
     summaries: List[PathSummary]
+    func_summary: FuncSummary | None
     pp_coverage: List[PpCoverage]
     trace_index: List[TraceIndex]
 
@@ -45,6 +46,7 @@ def build_pipeline(
     - Dict[fn -> FunctionPipeline]
     """
     inputs = load_inputs(trace_path, cfg_path)
+    func_summaries = load_func_summary(cfg_path)
     trace_index: List[TraceIndex] = []
     if trace_index_path:
         trace_index = load_trace_index(trace_index_path)
@@ -72,6 +74,8 @@ def build_pipeline(
     pp_cov_by_fn: Dict[str, List[PpCoverage]] = {}
     for p in inputs.pp_coverage:
         pp_cov_by_fn.setdefault(p.fn, []).append(p)
+
+    func_summary_by_fn: Dict[str, FuncSummary] = {f.fn: f for f in func_summaries}
 
     out: Dict[str, FunctionPipeline] = {}
     fns = set(by_fn) | set(blocks_by_fn) | set(paths_by_fn)
@@ -104,6 +108,7 @@ def build_pipeline(
             edges=edges_by_fn.get(fn, []),
             paths=path_bundles,
             summaries=summaries_by_fn.get(fn, []),
+            func_summary=func_summary_by_fn.get(fn),
             pp_coverage=pp_cov_by_fn.get(fn, []),
             trace_index=fn_index,
         )

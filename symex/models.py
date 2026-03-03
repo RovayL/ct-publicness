@@ -26,11 +26,20 @@ class TraceInst:
     op: str
     def_id: Optional[str]
     uses: Sequence[str]
-    tx: Optional[TxInfo]
+    txs: Sequence[TxInfo]
     def_ty: Optional[str]
     use_tys: Optional[Sequence[str]]
     icmp_pred: Optional[str]
     fcmp_pred: Optional[str]
+    atomic_op: Optional[str]
+    callee: Optional[str]
+    extract_indices: Optional[Sequence[int]]
+    insert_indices: Optional[Sequence[int]]
+
+    @property
+    def tx(self) -> Optional[TxInfo]:
+        """Backward-compatible access to the first transmitter, if any."""
+        return self.txs[0] if self.txs else None
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,7 @@ class FuncSummary:
     trace_emitted: int
     trace_truncated: bool
     trace_max_inst: int
+    arg_ids: Sequence[str]
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,13 @@ int linear_arith(int a, int b) {
   return z - 7;
 }
 
+int linear_div(int a, int b) {
+  int x = a * 2;
+  int y = b * 2;
+  int z = x + y;
+  return z / 2;
+}
+
 int linear_mem(int *p, int *q) {
   int x = *p;
   int y = *q;

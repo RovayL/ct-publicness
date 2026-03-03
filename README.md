@@ -74,6 +74,8 @@ What is done
   - Emits CFG/path records with path IDs, decisions, path conditions (string/json),
     per-path pp_seq (optional), pp coverage (optional), and path summaries.
   - Loop-bounded path enumeration with caps + pruning for constant branches/switch/indirect.
+  - Current transmitter set includes load/store addresses, branch/switch/indirectbr
+    operands, atomic memory op addresses, call targets, and div/rem operands.
   - Optional trace index (pp -> line) and trace truncation (max inst).
 - Scripts:
   - gen_traces.sh supports budgets, repeat runs, run_summary stats, and BENCH_LIST.
@@ -82,9 +84,13 @@ What is done
 - Person B Python:
   - Parsers for trace/cfg/index and a pipeline to join paths with instruction streams.
   - Minimal Z3-backed symexec (dual execution + transmitter equality).
+  - Multi-transmitter support (`txs`) for instructions with more than one observable operand.
+  - Restricted direct-call summaries for simple straight-line callees.
+  - Tuple-aware `cmpxchg` / `extractvalue` handling and improved atomic memory sharing.
   - Path conditions consumed from structured `path_cond_json` (with string fallback).
   - Per-path/function solver metrics: query counts, solver time, cache hits/misses.
-  - Aggregation to public_at_point.
+  - Optional first-iteration loop-invariant heuristic for bounded loop paths.
+  - Baseline aggregation to public_at_point plus enhanced aggregation with loop facts.
   - Utilities: join_trace_index, metrics, benchmarks, main CLI summaries.
   - Z3 setup documented in symex/README.md.
 
@@ -132,8 +138,19 @@ Notes to remember
 - `run_benchmarks.sh` now also emits:
   - `build/traces/*.path_public.ndjson` (includes solver summaries),
   - `build/traces/*.public_at_point.ndjson`,
-  - benchmark CSV columns for `query_count`, `solver_time_ms`, and cache stats.
+  - `build/traces/*.enhanced_public_at_point.ndjson` (baseline + loop facts),
+  - benchmark CSV columns for `query_count`, `solver_time_ms`, cache stats,
+    and optional loop-invariant counts.
+- `transmitters.ll` now also includes:
+  - direct-call summary demos,
+  - `cmpxchg` aggregate-flow demos via `insertvalue`/`extractvalue`,
+  - an atomic alias-sharing demo where equivalent addresses are canonicalized.
 - If Z3 import fails, run: `python -m pip install -r symex/requirements.txt`.
+- For loop-invariant experiments, run with `MAX_LOOP_ITERS=1` and
+  `ANALYZE_LOOP_INVARIANTS=1`.
+- The loop-invariant facts are emitted into `*.path_public.ndjson` as a
+  separate result stream; `*.public_at_point.ndjson` is the standard all-path
+  aggregation and `*.enhanced_public_at_point.ndjson` overlays loop facts.
 
 Where to look
 - LLVM pass: llvm-pass/PublicDataPass.cpp
