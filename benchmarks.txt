@@ -3,5 +3,9 @@ examples/linear.c
 examples/loop.c
 examples/loop_invariant.c
 examples/diversity.c
+examples/algos.c
+examples/bitwise.c
+examples/classic_benchmarks.c
+examples/crypto_kernels.c
 examples/const_pruned.ll
 examples/transmitters.ll

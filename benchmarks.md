@@ -11,6 +11,10 @@ The default suite is listed in benchmarks.txt:
 - examples/loop.c
 - examples/loop_invariant.c
 - examples/diversity.c
+- examples/algos.c
+- examples/bitwise.c
+- examples/classic_benchmarks.c
+- examples/crypto_kernels.c
 - examples/const_pruned.ll
 - examples/transmitters.ll
 
@@ -35,6 +39,30 @@ Extended transmitter benchmark
 - `tx_atomicrmw_alias_eq`: atomic update plus load through an equivalent
   address expression; the final equality should be non-public only if alias
   canonicalization is working.
+
+Classical algorithm kernels
+- `bubble_sort`: nested loops with branchy swaps over array accesses.
+- `quicksort_partition_kernel`: partition step for quicksort, with pivot loads,
+  conditional swaps, and multiple stores.
+- `tsp_choose_next_city`: nearest-neighbor TSP step over a dense distance
+  matrix with a visited-mask branch.
+- `convex_hull_next_point`: Jarvis-march style step over point arrays.
+- `recursive_binary_search`: recursion plus data-dependent branch and indexed
+  load.
+
+Crypto-style kernels
+- `bitwise_eq`: branchless equality mask.
+- `bitwise_secret_index`: secret-dependent lookup.
+- `bitwise_secret_store`: secret-dependent store address.
+- `rsa_square_multiply`: classical branchy modular exponentiation kernel.
+- `rsa_ladder_mix`: branchless ladder-style modular exponentiation step.
+- `sha256_round_kernel`: SHA-256 round-style kernel with dynamic message/round
+  loads.
+- `paillier_encrypt_lookup`: direct Paillier-style table lookup plus modular
+  multiply/remainder.
+- `paillier_encrypt_ct_lookup`: constant-time style full-table scan for the
+  same Paillier-style lookup.
+- `ct_memcmp_u8`: constant-time bytewise comparison loop.
 
 Add a new benchmark
 1) Add a new C or LLVM IR (`.ll`) file under examples/ (or elsewhere).
